@@ -56,4 +56,3 @@ We will maintain ongoing documentation in `docs/` to support the required Capsto
 - Data retention notes
 - AI guardrails + prompt design notes
 - Setup + deployment guides
-
