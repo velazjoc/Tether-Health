@@ -8,9 +8,12 @@ import {
   SafeAreaView,
   StatusBar,
   Animated,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { getOrCreateSession } from '@/services/session';
+import { getInsights, getHealthLogs } from '@/services/db';
 
 // ─── TetherLogo ───────────────────────────────────────────────────────────────
 function TetherLogo({ size = 32 }: { size?: number }) {
@@ -221,14 +224,46 @@ const nb = StyleSheet.create({
   closeButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
 });
 
-// ─── Snapshot items ───────────────────────────────────────────────────────────
-const snapshotItems = [
-  { icon: 'trending-up-outline' as const, title: 'Movement — 7-day streak', subtitle: 'Top 30% of similar users this month' },
-  { icon: 'water-outline' as const,       title: 'Hydration below goal',    subtitle: 'Averaging 1.4L — linked to afternoon energy dips' },
-  { icon: 'sunny-outline' as const,       title: 'Vitamin D still low — 3rd month', subtitle: 'Ask Dr. Patel at next visit' },
-];
+// ─── Icon helpers ─────────────────────────────────────────────────────────────
+const INSIGHT_ICON_MAP: Record<string, React.ComponentProps<typeof Ionicons>['name']> = {
+  sleep:      'moon-outline',
+  movement:   'trending-up-outline',
+  exercise:   'trending-up-outline',
+  hydration:  'water-outline',
+  water:      'water-outline',
+  nutrition:  'sunny-outline',
+  vitamin:    'sunny-outline',
+  heart:      'heart-outline',
+  weight:     'scale-outline',
+};
 
-// ─── Mock notifications ───────────────────────────────────────────────────────
+function insightIcon(category: string): React.ComponentProps<typeof Ionicons>['name'] {
+  return INSIGHT_ICON_MAP[category?.toLowerCase()] ?? 'sparkles';
+}
+
+const METRIC_ICON_MAP: Record<string, React.ComponentProps<typeof Ionicons>['name']> = {
+  movement:   'trending-up-outline',
+  exercise:   'trending-up-outline',
+  hydration:  'water-outline',
+  water:      'water-outline',
+  sleep:      'moon-outline',
+  nutrition:  'sunny-outline',
+  vitamin:    'sunny-outline',
+  weight:     'scale-outline',
+  heart:      'heart-outline',
+  steps:      'walk-outline',
+};
+
+function metricIcon(type: string): React.ComponentProps<typeof Ionicons>['name'] {
+  return METRIC_ICON_MAP[type?.toLowerCase()] ?? 'pulse-outline';
+}
+
+function toStatusVariant(s: string | undefined): StatusVariant {
+  if (s === 'needs-attention' || s === 'keep-going' || s === 'on-track') return s;
+  return 'on-track';
+}
+
+// ─── Mock notifications (no DB function yet) ──────────────────────────────────
 const mockNotifications: Notification[] = [
   { id: '1', type: 'insight', title: 'Tether noticed something',   body: "Your deep sleep has been dropping — here's what might help.", timestamp: '2h', isRead: false, icon: 'sparkles' },
   { id: '2', type: 'streak',  title: '5 days in a row',            body: "You've hit your wind-down routine 5 nights running.",          timestamp: '1d', isRead: true,  icon: 'trending' },
@@ -238,7 +273,35 @@ const mockNotifications: Notification[] = [
 // ─── Home screen ─────────────────────────────────────────────────────────────
 export default function Home() {
   const [showBanner, setShowBanner] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [insights, setInsights] = useState<any[]>([]);
+  const [healthLogs, setHealthLogs] = useState<any[]>([]);
   const scrollRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const sid = await getOrCreateSession();
+        const [ins, logs] = await Promise.all([
+          getInsights(sid),
+          getHealthLogs(sid),
+        ]);
+        setInsights(ins ?? []);
+        setHealthLogs(logs ?? []);
+      } catch (e) {
+        console.error('Home load error:', e);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  const todayStr = new Date().toDateString();
+  const todayLogs = healthLogs.filter(
+    (log) => new Date(log.created_at).toDateString() === todayStr
+  );
+  const heroInsight = insights[0] ?? null;
 
   const handleHelpClick = () => {
     router.push({ pathname: '/tutorial', params: { from: 'home' } } as any);
@@ -289,34 +352,48 @@ export default function Home() {
 
         {/* ── Hero insight card ── */}
         <View style={styles.section}>
-          <TouchableOpacity
-            onPress={() => router.push('/insight/sleep-improvement' as any)}
-            style={styles.insightCard}
-            activeOpacity={0.92}
-          >
-            <View style={styles.insightCardTop}>
-              <View style={styles.insightCardTopLeft}>
-                <View style={styles.insightIconWrap}>
-                  <Ionicons name="moon-outline" size={18} color="#FFFFFF" />
-                </View>
-                <Text style={styles.insightCardLabel}>TETHER · SLEEP</Text>
-              </View>
-              <View style={styles.insightStatusTag}>
-                <StatusTag variant="needs-attention" onTeal />
-              </View>
+          {loading ? (
+            <View style={[styles.insightCard, { alignItems: 'center', justifyContent: 'center', minHeight: 120 }]}>
+              <ActivityIndicator color="rgba(255,255,255,0.7)" />
             </View>
+          ) : heroInsight ? (
+            <TouchableOpacity
+              onPress={() => router.push(`/insight/${heroInsight.id}` as any)}
+              style={styles.insightCard}
+              activeOpacity={0.92}
+            >
+              <View style={styles.insightCardTop}>
+                <View style={styles.insightCardTopLeft}>
+                  <View style={styles.insightIconWrap}>
+                    <Ionicons name={insightIcon(heroInsight.category)} size={18} color="#FFFFFF" />
+                  </View>
+                  <Text style={styles.insightCardLabel}>
+                    TETHER · {(heroInsight.category ?? 'health').toUpperCase()}
+                  </Text>
+                </View>
+                <View style={styles.insightStatusTag}>
+                  <StatusTag variant={toStatusVariant(heroInsight.status)} onTeal />
+                </View>
+              </View>
 
-            <Text style={styles.insightCardBody}>
-              Your sleep dipped after your February 14 UTI — first time this pattern has appeared in 6 months of tracking
-            </Text>
+              <Text style={styles.insightCardBody}>
+                {heroInsight.body ?? heroInsight.summary ?? heroInsight.title ?? ''}
+              </Text>
 
-            <Text style={styles.insightCardCta}>See what's behind this →</Text>
+              <Text style={styles.insightCardCta}>See what's behind this →</Text>
 
-            <View style={styles.insightCardDivider} />
-            <Text style={styles.insightCardSource}>
-              Source: Apple Health · Sleep data from Feb 24–27
-            </Text>
-          </TouchableOpacity>
+              <View style={styles.insightCardDivider} />
+              <Text style={styles.insightCardSource}>
+                {heroInsight.source ?? 'Source: Tether Health'}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={[styles.insightCard, { alignItems: 'center', justifyContent: 'center', minHeight: 100 }]}>
+              <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center' }}>
+                No insights yet — check back after logging some health data.
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* ── Appointment banner ── */}
@@ -343,19 +420,27 @@ export default function Home() {
         <View style={[styles.section, styles.snapshotSection]}>
           <View style={styles.sectionDivider} />
           <Text style={styles.sectionLabel}>TODAY'S SNAPSHOT</Text>
-          <View style={styles.snapshotList}>
-            {snapshotItems.map((item, i) => (
-              <View key={i} style={styles.snapshotRow}>
-                <View style={styles.snapshotIconWrap}>
-                  <Ionicons name={item.icon} size={20} color="#3D6E68" />
+          {loading ? (
+            <View style={{ alignItems: 'center', paddingVertical: 16 }}>
+              <ActivityIndicator color="#7A7570" />
+            </View>
+          ) : todayLogs.length > 0 ? (
+            <View style={styles.snapshotList}>
+              {todayLogs.map((log) => (
+                <View key={log.id} style={styles.snapshotRow}>
+                  <View style={styles.snapshotIconWrap}>
+                    <Ionicons name={metricIcon(log.metric_type)} size={20} color="#3D6E68" />
+                  </View>
+                  <View style={styles.snapshotText}>
+                    <Text style={styles.snapshotTitle}>{log.title ?? log.metric_type}</Text>
+                    <Text style={styles.snapshotSubtitle}>{log.note ?? log.subtitle ?? ''}</Text>
+                  </View>
                 </View>
-                <View style={styles.snapshotText}>
-                  <Text style={styles.snapshotTitle}>{item.title}</Text>
-                  <Text style={styles.snapshotSubtitle}>{item.subtitle}</Text>
-                </View>
-              </View>
-            ))}
-          </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.snapshotSubtitle}>No health data logged today.</Text>
+          )}
         </View>
 
         {/* ── Notification History ── */}

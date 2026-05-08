@@ -6,13 +6,8 @@ import { supabase } from './supabase';
 const SESSION_KEY = 'tether_session_id';
 
 export async function getOrCreateSession(): Promise<string> {
-  const existing = await AsyncStorage.getItem(SESSION_KEY);
-  if (existing) return existing;
-
-  const sessionId = uuidv4();
-
-  await supabase.from('demo_sessions').insert({ session_id: sessionId });
-  await AsyncStorage.setItem(SESSION_KEY, sessionId);
-
-  return sessionId;
+  // TEMP: hardcode for demo testing, remove before handoff
+  const SESSION_ID = '00000000-0000-0000-0000-000000000001';
+  await AsyncStorage.setItem('tether_session_id', SESSION_ID);
+  return SESSION_ID;
 }

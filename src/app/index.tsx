@@ -11,9 +11,17 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useEffect } from 'react';
+import { getOrCreateSession } from '@/services/session';
+
+
 
 export default function Splash() {
   const [showPrivacySheet, setShowPrivacySheet] = useState(false);
+
+  useEffect(() => {
+    getOrCreateSession().catch(console.error);
+  }, []);
 
   const navigateAfterDismiss = (href: string) => {
     setShowPrivacySheet(false);
