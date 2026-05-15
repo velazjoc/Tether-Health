@@ -9,9 +9,12 @@ import {
   StatusBar,
   Animated,
   Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { getOrCreateSession } from '@/services/session';
+import { getGoals, getHealthLogs } from '@/services/db';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const TILE_SIZE = (Dimensions.get('window').width - 40 - 8) / 2; // 20px side padding, 8px gap
@@ -129,21 +132,77 @@ const nb = StyleSheet.create({
   body: { fontSize: 12, color: '#7A7570' },
 });
 
-// ─── Mock data ────────────────────────────────────────────────────────────────
-const goals = [
-  { id: 1, name: 'Sleep 7+ hours per night',      current: 6.2, target: 7, unit: 'hours',     status: 'needs-attention' as StatusVariant, progress: 89, actionText: 'See what\'s helping →', actionRoute: '/metric/sleep',    chartData: [{ day: 'Mon', value: 6.2 }, { day: 'Tue', value: 5.8 }, { day: 'Wed', value: 7.1 }, { day: 'Thu', value: 6.5 }, { day: 'Fri', value: 5.4 }, { day: 'Sat', value: 6.8 }, { day: 'Sun', value: 6.1 }], yMin: 4, yMax: 8 },
-  { id: 2, name: 'Drink 8 glasses of water daily', current: 7.5, target: 8, unit: 'glasses',   status: 'on-track' as StatusVariant,        progress: 94, actionText: 'See what\'s helping →', actionRoute: '/metric/hydration', chartData: [{ day: 'Mon', value: 7.2 }, { day: 'Tue', value: 7.8 }, { day: 'Wed', value: 7.4 }, { day: 'Thu', value: 6.9 }, { day: 'Fri', value: 7.6 }, { day: 'Sat', value: 8.0 }, { day: 'Sun', value: 7.3 }], yMin: 5, yMax: 9 },
-  { id: 3, name: 'Take vitamin D supplement',      current: 6,   target: 7, unit: 'days/week', status: 'on-track' as StatusVariant,        progress: 86, actionText: 'See what\'s helping →', actionRoute: '/metric/vitamin-d',  chartData: [{ day: 'Mon', value: 1 }, { day: 'Tue', value: 1 }, { day: 'Wed', value: 1 }, { day: 'Thu', value: 1 }, { day: 'Fri', value: 1 }, { day: 'Sat', value: 0 }, { day: 'Sun', value: 1 }], yMin: 0, yMax: 1 },
-];
-
+// ─── Types & data helpers ─────────────────────────────────────────────────────
 type MetricType = 'sleep' | 'steps' | 'hydration' | 'vitamin-d';
 
-const weekMetrics: { name: string; current: string; goal: string; percentage: number; route: string; type: MetricType }[] = [
-  { name: 'SLEEP',     current: '6.2h', goal: '8h',       percentage: 78, route: '/metric/sleep',    type: 'sleep' },
-  { name: 'STEPS',     current: '8.4k', goal: '10k',      percentage: 84, route: '/metric/steps',    type: 'steps' },
-  { name: 'HYDRATION', current: '1.4L', goal: '2L',       percentage: 70, route: '/metric/hydration', type: 'hydration' },
-  { name: 'VITAMIN D', current: '29',   goal: '40 ng/mL', percentage: 73, route: '/metric/vitamin-d', type: 'vitamin-d' },
-];
+type Goal = {
+  id: string; name: string; current: number; target: number; unit: string;
+  status: StatusVariant; progress: number; actionText: string; actionRoute: string;
+  chartData: { day: string; value: number }[]; yMin: number; yMax: number;
+};
+
+type WeekMetric = {
+  name: string; current: string; goal: string;
+  percentage: number; route: string; type: MetricType;
+};
+
+const KNOWN_TYPES = new Set<string>(['sleep', 'steps', 'hydration', 'vitamin-d']);
+
+function mapGoal(g: any): Goal {
+  const current = g.current_value ?? g.current ?? 0;
+  const target = g.target_value ?? g.target ?? 1;
+  const raw = g.progress ?? Math.round((current / (target || 1)) * 100);
+  const progress = raw <= 1 ? Math.round(raw * 100) : raw;
+  const status: StatusVariant =
+    (['needs-attention', 'keep-going', 'on-track'] as string[]).includes(g.status)
+      ? (g.status as StatusVariant)
+      : progress >= 90 ? 'on-track' : progress >= 70 ? 'keep-going' : 'needs-attention';
+  const metricType: string = g.metric_type ?? '';
+  return {
+    id: String(g.id),
+    name: g.name ?? '',
+    current,
+    target,
+    unit: g.unit ?? '',
+    status,
+    progress,
+    actionText: g.action_text ?? "See what's helping →",
+    actionRoute: g.action_route ?? (metricType ? `/metric/${metricType}` : '/progress'),
+    chartData: Array.isArray(g.chart_data) ? g.chart_data : [],
+    yMin: g.y_min ?? 0,
+    yMax: g.y_max ?? Math.max(target * 1.5, 1),
+  };
+}
+
+function buildWeekMetrics(logs: any[]): WeekMetric[] {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 7);
+  const recent = logs.filter((l) => new Date(l.created_at) >= cutoff);
+  // logs are newest-first; first occurrence per type = latest value
+  const seen = new Set<string>();
+  const latest: any[] = [];
+  for (const log of recent) {
+    if (log.metric_type && !seen.has(log.metric_type)) {
+      seen.add(log.metric_type);
+      latest.push(log);
+    }
+  }
+  return latest.map((log) => {
+    const mt: string = log.metric_type ?? '';
+    const value = log.value ?? 0;
+    const unit = log.unit ?? '';
+    const target = log.target ?? 0;
+    const percentage = target > 0 ? Math.min(100, Math.round((value / target) * 100)) : 0;
+    return {
+      name: mt.toUpperCase().replace(/-/g, ' '),
+      current: `${value}${unit}`,
+      goal: target > 0 ? `${target}${unit}` : '',
+      percentage,
+      route: `/metric/${mt}`,
+      type: (KNOWN_TYPES.has(mt) ? mt : 'sleep') as MetricType,
+    };
+  });
+}
 
 const TILE_BG: Record<MetricType, string> = {
   'sleep':     '#F5F3FF',
@@ -161,8 +220,47 @@ const TILE_ICON: Record<MetricType, React.ComponentProps<typeof Ionicons>['name'
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 export default function Progress() {
-  const [expandedGoal, setExpandedGoal] = useState<number | null>(null);
+  const [expandedGoal, setExpandedGoal] = useState<string | null>(null);
   const [showBanner, setShowBanner] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [weekMetrics, setWeekMetrics] = useState<WeekMetric[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const sessionId = await getOrCreateSession();
+        const [rawGoals, rawLogs] = await Promise.all([
+          getGoals(sessionId),
+          getHealthLogs(sessionId),
+        ]);
+        setGoals((rawGoals ?? []).map(mapGoal));
+        setWeekMetrics(buildWeekMetrics(rawLogs ?? []));
+      } catch (_) {
+        // leave empty arrays on error
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F5F0E8" />
+        <View style={styles.header}>
+          <TetherLogo size={32} />
+          <Text style={styles.pageTitle}>Progress</Text>
+          <Text style={styles.pageSubtitle}>Your goals and how you're tracking</Text>
+        </View>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="large" color="#2E7D7D" />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const onTrackCount = goals.filter((g) => g.status === 'on-track').length;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -182,7 +280,9 @@ export default function Progress() {
           <View style={styles.tetherStrip}>
             <Ionicons name="sparkles" size={16} color="#2E7D7D" />
             <Text style={styles.tetherStripText}>
-              Good morning, Sarah — you're on track with 2 of 3 goals today.
+              {goals.length > 0
+                ? `You're on track with ${onTrackCount} of ${goals.length} goal${goals.length !== 1 ? 's' : ''} today.`
+                : 'Add your first goal to start tracking progress.'}
             </Text>
             <TouchableOpacity onPress={() => router.push('/chat' as any)} activeOpacity={0.7}>
               <Text style={styles.askTetherLink}>Ask Tether →</Text>
@@ -195,6 +295,9 @@ export default function Progress() {
           <Text style={styles.sectionLabel}>ACTIVE GOALS</Text>
 
           <View style={styles.goalsList}>
+            {goals.length === 0 && (
+              <Text style={styles.emptyText}>No active goals yet.</Text>
+            )}
             {goals.map((goal) => {
               const expanded = expandedGoal === goal.id;
               const accentColor = goal.status === 'on-track' ? '#2E7D7D' : '#C4857A';
@@ -246,6 +349,9 @@ export default function Progress() {
         <View style={[styles.section, { paddingBottom: 32 }]}>
           <Text style={styles.sectionLabel}>THIS WEEK</Text>
 
+          {weekMetrics.length === 0 && (
+            <Text style={styles.emptyText}>No data logged this week.</Text>
+          )}
           <View style={styles.tilesGrid}>
             {weekMetrics.map((metric, i) => (
               <TouchableOpacity
@@ -341,4 +447,5 @@ const styles = StyleSheet.create({
   // View all button
   viewAllButton: { marginTop: 16, padding: 16, borderRadius: 16, backgroundColor: '#FDFAF5', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 8, elevation: 2 },
   viewAllText: { fontSize: 15, fontWeight: '500', color: '#2E7D7D' },
+  emptyText: { fontSize: 13, color: '#7A7570' },
 });

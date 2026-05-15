@@ -1,21 +1,78 @@
-import { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, StatusBar, Alert } from 'react-native';
+import { useState, useEffect } from 'react';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, StatusBar, ActivityIndicator } from 'react-native';
 import { router, Stack } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { getOrCreateSession } from '@/services/session';
+import { getProfile, saveProfile } from '@/services/db';
 
 const pronounOptions = ['She/Her', 'He/Him', 'They/Them'];
 
 export default function EditProfile() {
-  const [firstName, setFirstName] = useState('Sarah');
-  const [lastName, setLastName] = useState('James');
-  const [pronouns, setPronouns] = useState('She/Her');
-  const [age, setAge] = useState('38');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [pronouns, setPronouns] = useState('');
+  const [age, setAge] = useState('');
   const [focused, setFocused] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = () => {
-    // TODO: persist with AsyncStorage
+  useEffect(() => {
+    (async () => {
+      try {
+        const sessionId = await getOrCreateSession();
+        const data = await getProfile(sessionId);
+        if (data) {
+          setFirstName(data.first_name ?? '');
+          setLastName(data.last_name ?? '');
+          setPronouns(data.pronouns ?? '');
+          setAge(data.age != null ? String(data.age) : '');
+        }
+      } catch (_) {
+        // leave defaults on error
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const sessionId = await getOrCreateSession();
+      await saveProfile(sessionId, {
+        first_name: firstName.trim() || null,
+        last_name: lastName.trim() || null,
+        pronouns: pronouns || null,
+        age: age.trim() ? Number(age.trim()) : null,
+      });
+    } catch (_) {
+      // non-blocking — navigate back regardless
+    } finally {
+      setSaving(false);
+    }
     router.back();
   };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <StatusBar barStyle="dark-content" backgroundColor="#FDFCFB" />
+        <View style={styles.header}>
+          <View style={styles.headerRow}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.backButton} activeOpacity={0.7}>
+              <Ionicons name="arrow-back" size={18} color="#7A7570" />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.title}>Edit Profile</Text>
+        </View>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="large" color="#2E7D7D" />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -36,7 +93,7 @@ export default function EditProfile() {
         {/* Avatar */}
         <View style={styles.avatarRow}>
           <View style={styles.avatar}>
-            <Text style={styles.avatarInitial}>S</Text>
+            <Text style={styles.avatarInitial}>{firstName.charAt(0).toUpperCase() || '?'}</Text>
           </View>
           <TouchableOpacity activeOpacity={0.7}>
             <Text style={styles.changePhotoText}>Change Photo</Text>
@@ -102,7 +159,7 @@ export default function EditProfile() {
         </View>
 
         {/* Save */}
-        <TouchableOpacity onPress={handleSave} style={styles.saveButton} activeOpacity={0.85}>
+        <TouchableOpacity onPress={handleSave} disabled={saving} style={styles.saveButton} activeOpacity={0.85}>
           <Ionicons name="checkmark" size={20} color="#FFFFFF" />
           <Text style={styles.saveButtonText}>Save Changes</Text>
         </TouchableOpacity>

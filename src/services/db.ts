@@ -162,3 +162,23 @@ export async function getHealthLogsByMetric(sessionId: string, metricType: strin
   if (error) throw error;
   return data;
 }
+
+export async function getGoals(sessionId: string) {
+  const { data, error } = await supabase
+    .from('demo_goals')
+    .select('*')
+    .eq('session_id', sessionId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+export async function saveGoal(sessionId: string, goal: object) {
+  const { data, error } = await supabase
+    .from('demo_goals')
+    .insert({ session_id: sessionId, ...goal })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}

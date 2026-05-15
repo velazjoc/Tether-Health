@@ -11,6 +11,8 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { getOrCreateSession } from '@/services/session';
+import { saveConditions } from '@/services/db';
 
 type Condition = { name: string; description: string };
 
@@ -90,8 +92,19 @@ export default function Conditions() {
     setActiveTooltip(activeTooltip === conditionName ? null : conditionName);
   };
 
-  const handleContinue = () => {
-    // TODO: persist with AsyncStorage once installed
+  const [saving, setSaving] = useState(false);
+
+  const handleContinue = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const sessionId = await getOrCreateSession();
+      await saveConditions(sessionId, selectedConditions.map((c) => c.name));
+    } catch (_) {
+      // non-blocking — proceed even if save fails
+    } finally {
+      setSaving(false);
+    }
     router.push('/goals');
   };
 
@@ -218,6 +231,7 @@ export default function Conditions() {
         {/* Continue button */}
         <TouchableOpacity
           onPress={handleContinue}
+          disabled={saving}
           style={styles.continueButton}
           activeOpacity={0.85}
         >

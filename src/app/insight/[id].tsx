@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,9 +7,12 @@ import {
   StyleSheet,
   SafeAreaView,
   StatusBar,
+  ActivityIndicator,
 } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { getOrCreateSession } from '@/services/session';
+import { getInsightById } from '@/services/db';
 
 // ─── TetherLogo ───────────────────────────────────────────────────────────────
 function TetherLogo({ size = 32 }: { size?: number }) {
@@ -23,24 +27,71 @@ function TetherLogo({ size = 32 }: { size?: number }) {
   );
 }
 
-const sleepBreakdown = [
-  { label: 'Deep',  value: 38, color: '#B89B6A' },
-  { label: 'REM',   value: 22, color: '#6A9E96' },
-  { label: 'Light', value: 40, color: '#B8B0A6' },
-];
-
-const askQuestions = [
-  'What exactly is deep sleep and why does it matter?',
-  'What lifestyle changes can improve my deep sleep?',
-  'How does my sleep affect my other health conditions?',
-];
+type BreakdownItem = { label: string; value: number; color: string };
+type Insight = {
+  title: string;
+  category?: string;
+  summary?: string;
+  what_this_means?: string;
+  breakdown?: BreakdownItem[];
+  doctor_questions?: string[];
+  follow_up_questions?: string[];
+  statistical_context?: string;
+};
 
 export default function InsightDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const [insight, setInsight] = useState<Insight | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const sessionId = await getOrCreateSession();
+        const data = await getInsightById(sessionId, id);
+        setInsight(data ?? null);
+      } catch (_) {
+        setInsight(null);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [id]);
 
   const askTether = (question: string) => {
     router.push({ pathname: '/chat', params: { initialQuestion: question } } as any);
   };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <StatusBar barStyle="dark-content" backgroundColor="#F5F0E8" />
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="large" color="#2E7D7D" />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!insight) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <StatusBar barStyle="dark-content" backgroundColor="#F5F0E8" />
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton} activeOpacity={0.7}>
+            <Ionicons name="arrow-back" size={18} color="#7A7570" />
+          </TouchableOpacity>
+          <Text style={{ fontSize: 16, color: '#7A7570', marginTop: 24 }}>Insight not found.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const followUpQuestions: string[] = Array.isArray(insight.follow_up_questions) ? insight.follow_up_questions : [];
+  const breakdown: BreakdownItem[] = Array.isArray(insight.breakdown) ? insight.breakdown : [];
+  const doctorQuestions: string[] = Array.isArray(insight.doctor_questions) ? insight.doctor_questions : [];
 
   return (
     <SafeAreaView style={styles.container}>
@@ -62,17 +113,19 @@ export default function InsightDetail() {
             <View style={styles.categoryIcon}>
               <Ionicons name="moon-outline" size={16} color="#3D6E68" />
             </View>
-            <Text style={styles.categoryLabel}>TETHER · SLEEP</Text>
+            <Text style={styles.categoryLabel}>
+              {insight.category ? `TETHER · ${insight.category.toUpperCase()}` : 'TETHER'}
+            </Text>
           </View>
 
-          <Text style={styles.title}>
-            Your deep sleep has been dropping for two weeks
-          </Text>
+          <Text style={styles.title}>{insight.title}</Text>
 
-          <View style={styles.dateRow}>
-            <Ionicons name="calendar-outline" size={16} color="#7E7670" />
-            <Text style={styles.dateText}>Spotted Feb 15–27 · Updated 2h ago</Text>
-          </View>
+          {insight.summary ? (
+            <View style={styles.dateRow}>
+              <Ionicons name="calendar-outline" size={16} color="#7E7670" />
+              <Text style={styles.dateText}>{insight.summary}</Text>
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.body}>
@@ -86,73 +139,73 @@ export default function InsightDetail() {
             <Text style={styles.askCardSubtitle}>
               Get personalized explanations and actionable advice in simple terms.
             </Text>
-            <View style={styles.askQuestions}>
-              {askQuestions.map((q) => (
-                <TouchableOpacity
-                  key={q}
-                  onPress={() => askTether(q)}
-                  style={styles.askQuestionButton}
-                  activeOpacity={0.75}
-                >
-                  <Text style={styles.askQuestionText}>→ {q}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            {followUpQuestions.length > 0 && (
+              <View style={styles.askQuestions}>
+                {followUpQuestions.map((q) => (
+                  <TouchableOpacity
+                    key={q}
+                    onPress={() => askTether(q)}
+                    style={styles.askQuestionButton}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={styles.askQuestionText}>→ {q}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
           </View>
 
           {/* ── Section divider ── */}
           <View style={styles.divider} />
 
           {/* ── What this means ── */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>WHAT THIS MEANS</Text>
-            <Text style={styles.bodyText}>
-              Deep sleep is when your body does most of its repair work — immune
-              function, memory, energy restoration. You're normally getting close
-              to 5 hours. These past two weeks it's been closer to 3.8.
-            </Text>
-            <View style={styles.highlightCard}>
-              <Text style={styles.highlightText}>
-                <Text style={styles.highlightBold}>68% of people</Text>
-                {' '}with this pattern improve within 2 weeks of a consistent wind-down routine.
-              </Text>
+          {insight.what_this_means ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>WHAT THIS MEANS</Text>
+              <Text style={styles.bodyText}>{insight.what_this_means}</Text>
+              {insight.statistical_context ? (
+                <View style={styles.highlightCard}>
+                  <Text style={styles.highlightText}>{insight.statistical_context}</Text>
+                </View>
+              ) : null}
             </View>
-          </View>
+          ) : null}
 
           {/* ── Your breakdown ── */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>YOUR BREAKDOWN</Text>
-            <View style={styles.card}>
-              {sleepBreakdown.map((item) => (
-                <View key={item.label} style={styles.barRow}>
-                  <Text style={styles.barLabel}>{item.label}</Text>
-                  <View style={styles.barTrack}>
-                    <View style={[styles.barFill, { width: `${item.value}%` as any, backgroundColor: item.color }]} />
+          {breakdown.length > 0 ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>YOUR BREAKDOWN</Text>
+              <View style={styles.card}>
+                {breakdown.map((item) => (
+                  <View key={item.label} style={styles.barRow}>
+                    <Text style={styles.barLabel}>{item.label}</Text>
+                    <View style={styles.barTrack}>
+                      <View style={[styles.barFill, { width: `${item.value}%` as any, backgroundColor: item.color }]} />
+                    </View>
+                    <Text style={styles.barValue}>{item.value}%</Text>
                   </View>
-                  <Text style={styles.barValue}>{item.value}%</Text>
-                </View>
-              ))}
+                ))}
+              </View>
             </View>
-          </View>
+          ) : null}
 
           {/* ── Questions for your doctor ── */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>QUESTIONS FOR YOUR DOCTOR</Text>
-            <View style={styles.card}>
-              <View style={styles.doctorCardHeader}>
-                <View style={styles.doctorCardIcon}>
-                  <Ionicons name="chatbubble-outline" size={16} color="#3D6E68" />
+          {doctorQuestions.length > 0 ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>QUESTIONS FOR YOUR DOCTOR</Text>
+              <View style={styles.card}>
+                <View style={styles.doctorCardHeader}>
+                  <View style={styles.doctorCardIcon}>
+                    <Ionicons name="chatbubble-outline" size={16} color="#3D6E68" />
+                  </View>
+                  <Text style={styles.doctorCardTitle}>From this insight</Text>
                 </View>
-                <Text style={styles.doctorCardTitle}>From this insight</Text>
+                {doctorQuestions.map((q) => (
+                  <Text key={q} style={styles.doctorQuestion}>• {q}</Text>
+                ))}
               </View>
-              <Text style={styles.doctorQuestion}>
-                • Could my blood pressure medication be affecting my sleep quality?
-              </Text>
-              <Text style={styles.doctorQuestion}>
-                • Should I consider a sleep study given this 2-week pattern?
-              </Text>
             </View>
-          </View>
+          ) : null}
 
           <View style={{ height: 24 }} />
         </View>

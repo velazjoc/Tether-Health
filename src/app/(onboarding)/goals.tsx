@@ -9,6 +9,8 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { getOrCreateSession } from '@/services/session';
+import { saveTrackingPreferences } from '@/services/db';
 
 type GoalId = 'heart' | 'bp' | 'sleep' | 'movement';
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
@@ -57,8 +59,20 @@ export default function Goals() {
     );
   };
 
-  const handleContinue = () => {
-    // TODO: persist with AsyncStorage once installed
+  const [saving, setSaving] = useState(false);
+
+  const handleContinue = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const sessionId = await getOrCreateSession();
+      const labels = selectedGoals.map((id) => goals.find((g) => g.id === id)!.label);
+      await saveTrackingPreferences(sessionId, labels);
+    } catch (_) {
+      // non-blocking — proceed even if save fails
+    } finally {
+      setSaving(false);
+    }
     router.push('/notification-permission');
   };
 
@@ -136,6 +150,7 @@ export default function Goals() {
         {/* Continue */}
         <TouchableOpacity
           onPress={handleContinue}
+          disabled={saving}
           style={styles.continueButton}
           activeOpacity={0.85}
         >

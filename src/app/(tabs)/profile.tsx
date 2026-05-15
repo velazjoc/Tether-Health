@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { getOrCreateSession } from '@/services/session';
+import { getProfile } from '@/services/db';
 
 // ─── TetherLogo ───────────────────────────────────────────────────────────────
 function TetherLogo({ size = 24 }: { size?: number }) {
@@ -39,9 +41,9 @@ const connectedSources: {
   iconName: React.ComponentProps<typeof Ionicons>['name'];
   iconColor: string; status: string; statusColor: string; isConnected: boolean; route: string;
 }[] = [
-  { id: 1, name: 'Apple Health',  iconName: 'logo-apple',            iconColor: '#FF2D55', status: 'Connected',     statusColor: '#2E7D7D', isConnected: true,  route: '/apple-health-from-profile' },
-  { id: 2, name: 'Wearable',      iconName: 'watch-outline',          iconColor: '#7A7570', status: 'Not connected', statusColor: '#7A7570', isConnected: false, route: '/wearable-from-profile' },
-  { id: 3, name: 'Lab Results',   iconName: 'document-text-outline',  iconColor: '#7A7570', status: 'Connected',     statusColor: '#2E7D7D', isConnected: true,  route: '/lab-results-from-profile' },
+  { id: 1, name: 'Apple Health',  iconName: 'logo-apple',            iconColor: '#FF2D55', status: 'Connected',     statusColor: '#2E7D7D', isConnected: true,  route: '/apple-health-from-health' },
+  { id: 2, name: 'Wearable',      iconName: 'watch-outline',          iconColor: '#7A7570', status: 'Not connected', statusColor: '#7A7570', isConnected: false, route: '/wearable-from-health' },
+  { id: 3, name: 'Lab Results',   iconName: 'document-text-outline',  iconColor: '#7A7570', status: 'Connected',     statusColor: '#2E7D7D', isConnected: true,  route: '/lab-result/1' },
 ];
 
 const frequencyOptions: { value: Frequency; label: string; description: string }[] = [
@@ -61,8 +63,27 @@ const notifTypeList: { key: keyof NotifTypes; label: string; sublabel: string }[
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 export default function Profile() {
+  const [profileName, setProfileName] = useState('');
+  const [profilePronouns, setProfilePronouns] = useState('');
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [dataSharingEnabled, setDataSharingEnabled] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const sessionId = await getOrCreateSession();
+        const data = await getProfile(sessionId);
+        if (data) {
+          const first = data.first_name ?? '';
+          const last = data.last_name ?? '';
+          setProfileName([first, last].filter(Boolean).join(' '));
+          setProfilePronouns(data.pronouns ?? '');
+        }
+      } catch (_) {
+        // leave empty on error
+      }
+    })();
+  }, []);
   const [notificationFrequency, setNotificationFrequency] = useState<Frequency>('smart');
   const [notificationTypes, setNotificationTypes] = useState<NotifTypes>({
     newInsights: true, goalNudges: true, weeklySummary: true,
@@ -92,8 +113,8 @@ export default function Profile() {
         <View style={styles.profileHeader}>
           <TetherLogo size={24} />
           <View style={styles.profileInfo}>
-            <Text style={styles.profileName}>Sarah James</Text>
-            <Text style={styles.profileEmail}>sarah@email.com</Text>
+            <Text style={styles.profileName}>{profileName || 'Your Profile'}</Text>
+            <Text style={styles.profileEmail}>{profilePronouns}</Text>
             <TouchableOpacity onPress={() => router.push('/edit-profile' as any)} activeOpacity={0.7}>
               <Text style={styles.editProfileLink}>Edit profile →</Text>
             </TouchableOpacity>
@@ -229,7 +250,7 @@ export default function Profile() {
             <View style={styles.sectionDivider} />
 
             <TouchableOpacity
-              onPress={() => router.push('/profile' as any)}
+              onPress={() => router.push('/edit-profile' as any)}
               style={styles.plainRow}
               activeOpacity={0.7}
             >

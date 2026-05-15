@@ -11,6 +11,8 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { getOrCreateSession } from '@/services/session';
+import { saveProfile } from '@/services/db';
 
 function TetherLogo({ size = 40, color = '#FFFFFF' }: { size?: number; color?: string }) {
   const s = size / 32;
@@ -43,15 +45,29 @@ export default function Welcome() {
   const [bioSexExpanded, setBioSexExpanded] = useState(false);
   const [showWhyWeAsk, setShowWhyWeAsk] = useState(true);
   const [focusedField, setFocusedField] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const pronounOptions = ['She/Her', 'He/Him', 'They/Them', 'Add my own'];
   const biologicalSexOptions = ['Female', 'Male', 'Intersex'];
 
-  const handleContinue = () => {
-    if (firstName.trim()) {
-      // TODO: persist with AsyncStorage once @react-native-async-storage/async-storage is installed
-      router.push('/conditions');
+  const handleContinue = async () => {
+    if (!firstName.trim() || saving) return;
+    setSaving(true);
+    try {
+      const sessionId = await getOrCreateSession();
+      await saveProfile(sessionId, {
+        first_name: firstName.trim(),
+        last_name: lastName.trim() || null,
+        pronouns: pronouns === 'Add my own' ? customPronoun.trim() || null : pronouns || null,
+        dob: dateOfBirth.trim() || null,
+        biological_sex: biologicalSex || null,
+      });
+    } catch (_) {
+      // non-blocking — proceed even if save fails
+    } finally {
+      setSaving(false);
     }
+    router.push('/conditions');
   };
 
   const canContinue = firstName.trim().length > 0;
@@ -263,7 +279,7 @@ export default function Welcome() {
         {/* Continue button */}
         <TouchableOpacity
           onPress={handleContinue}
-          disabled={!canContinue}
+          disabled={!canContinue || saving}
           style={[styles.continueButton, !canContinue && styles.continueButtonDisabled]}
           activeOpacity={0.85}
         >

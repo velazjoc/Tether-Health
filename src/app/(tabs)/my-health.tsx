@@ -9,9 +9,12 @@ import {
   StatusBar,
   Animated,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { getOrCreateSession } from '@/services/session';
+import { getDocuments } from '@/services/db';
 
 type Zone = 'sources' | 'notes' | 'records';
 
@@ -28,28 +31,29 @@ function TetherLogo({ size = 32 }: { size?: number }) {
   );
 }
 
-// ─── Mock data ────────────────────────────────────────────────────────────────
+// ─── Types & helpers ──────────────────────────────────────────────────────────
 type SourceIcon = 'pulse-outline' | 'flask-outline' | 'document-text-outline';
 
+type DocNote = {
+  id: string; doctorName: string; specialty: string;
+  date: string; excerpt: string; insightCount: number;
+};
+type LabRecord = { id: string; name: string; date: string };
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Static — represents connected integrations, not uploaded documents
 const dataSources: {
   name: string; connected: boolean; lastSync: string | null;
   icon: SourceIcon; route: string;
 }[] = [
-  { name: 'Apple Health',    connected: true,  lastSync: '2 min ago',  icon: 'pulse-outline',        route: '/apple-health-from-my-health' },
-  { name: 'Quest Labs',      connected: true,  lastSync: '3 days ago', icon: 'flask-outline',         route: '/lab-results-from-my-health' },
-  { name: 'Medical Records', connected: true,  lastSync: '1 week ago', icon: 'document-text-outline', route: '/lab-results-from-my-health' },
-  { name: 'Fitbit',          connected: false, lastSync: null,         icon: 'pulse-outline',         route: '/wearable-from-my-health' },
-];
-
-const doctorNotes = [
-  { id: 1, doctorName: 'Dr. Sarah Patel', specialty: 'Primary Care', date: 'Jan 15, 2026', excerpt: 'Reviewed cycle irregularity patterns. Recommended vitamin D supplementation at 2000 IU daily. Follow-up labs in 3 months to track improvement.', insightCount: 3 },
-  { id: 2, doctorName: 'Dr. Emily Kim',   specialty: 'Dermatology',   date: 'Oct 12, 2025', excerpt: 'Discussed connection between PCOS and skin concerns. Prescribed topical treatment and suggested monitoring hormonal patterns through Tether.', insightCount: 1 },
-];
-
-const records = [
-  { id: 1, name: 'Lab Results - Vitamin D Panel', date: 'Feb 28, 2026' },
-  { id: 2, name: 'Ultrasound - Ovarian',          date: 'Jan 10, 2026' },
-  { id: 3, name: 'Blood Work - Hormone Panel',    date: 'Dec 15, 2025' },
+  { name: 'Apple Health',    connected: true,  lastSync: '2 min ago',  icon: 'pulse-outline',        route: '/apple-health-from-health' },
+  { name: 'Quest Labs',      connected: true,  lastSync: '3 days ago', icon: 'flask-outline',         route: '/lab-result/1' },
+  { name: 'Medical Records', connected: true,  lastSync: '1 week ago', icon: 'document-text-outline', route: '/lab-result/1' },
+  { name: 'Fitbit',          connected: false, lastSync: null,         icon: 'pulse-outline',         route: '/wearable-from-health' },
 ];
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
@@ -58,8 +62,45 @@ export default function MyHealth() {
   const [expandedSources, setExpandedSources] = useState(false);
   const [expandedNotes, setExpandedNotes] = useState(false);
   const [uploadingNote, setUploadingNote] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [doctorNotes, setDoctorNotes] = useState<DocNote[]>([]);
+  const [records, setRecords] = useState<LabRecord[]>([]);
   const scrollRef = useRef<ScrollView>(null);
   const offsets = useRef<Record<Zone, number>>({ sources: 0, notes: 0, records: 0 });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const sessionId = await getOrCreateSession();
+        const docs: any[] = await getDocuments(sessionId);
+        setDoctorNotes(
+          docs
+            .filter((d) => d.type === 'doctor_note')
+            .map((d) => ({
+              id: String(d.id),
+              doctorName: d.doctor_name ?? d.title ?? 'Unknown',
+              specialty: d.specialty ?? '',
+              date: formatDate(d.created_at),
+              excerpt: d.summary ?? d.excerpt ?? '',
+              insightCount: d.insight_count ?? 0,
+            }))
+        );
+        setRecords(
+          docs
+            .filter((d) => d.type === 'lab_result')
+            .map((d) => ({
+              id: String(d.id),
+              name: d.title ?? d.name ?? 'Document',
+              date: formatDate(d.created_at),
+            }))
+        );
+      } catch (_) {
+        // leave empty arrays on error
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
   // Spinner animation for upload state
   const spinValue = useRef(new Animated.Value(0)).current;
@@ -85,6 +126,22 @@ export default function MyHealth() {
 
   const displayedSources = expandedSources ? dataSources : dataSources.slice(0, 4);
   const displayedNotes = expandedNotes ? doctorNotes : doctorNotes.slice(0, 2);
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F5F0E8" />
+        <View style={styles.header}>
+          <TetherLogo size={32} />
+          <Text style={styles.pageTitle}>My Health</Text>
+          <Text style={styles.pageSubtitle}>Everything Tether uses to understand your health</Text>
+        </View>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="large" color="#2E7D7D" />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -191,12 +248,15 @@ export default function MyHealth() {
           <Text style={styles.zoneLabel}>DOCTOR NOTES</Text>
 
           <View style={styles.notesList}>
+            {displayedNotes.length === 0 && (
+              <Text style={styles.emptyText}>No doctor notes yet.</Text>
+            )}
             {displayedNotes.map((note) => (
               <View key={note.id} style={styles.noteCard}>
                 <View style={styles.noteCardHeader}>
                   <View style={styles.noteCardHeaderLeft}>
                     <Text style={styles.noteDoctorName}>{note.doctorName}</Text>
-                    <Text style={styles.noteMeta}>{note.specialty} · {note.date}</Text>
+                    <Text style={styles.noteMeta}>{note.specialty}{note.specialty ? ' · ' : ''}{note.date}</Text>
                   </View>
                   <View style={styles.insightBadge}>
                     <Text style={styles.insightBadgeText}>
@@ -259,6 +319,9 @@ export default function MyHealth() {
           <Text style={styles.zoneLabel}>MY RECORDS</Text>
 
           <View style={styles.recordsCard}>
+            {records.length === 0 && (
+              <Text style={[styles.emptyText, { padding: 16 }]}>No records yet.</Text>
+            )}
             {records.map((record, i) => (
               <TouchableOpacity
                 key={record.id}
@@ -451,4 +514,5 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
   uploadRecordLabel: { fontSize: 13, fontWeight: '500', color: '#2E7D7D' },
+  emptyText: { fontSize: 13, color: '#7A7570' },
 });
